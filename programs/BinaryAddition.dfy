@@ -5,6 +5,7 @@ here s' and t' are converted to decimal scalars
 s = [1,1,1], t = [1,0,1], ys = [1, 0, 0], s' = 7, t' = 5, ys' = 4
 ys' % 2 ^ (len(s)) = (s' + t') % 2 ^ (len(s))
 4 % 8 = 12 % 8
+The function performs 10-bit binary addition modulo 1024
 
 def f(s,t):
     a = 0;b = 0;
@@ -57,6 +58,7 @@ method ArrayToSequence(arr: array<bool>) returns (res: seq<bool>) // Converts bo
         }
 }
 
+
 function isBitSet(x: bv10, bitIndex: nat): bool
     requires bitIndex < 10
     ensures isBitSet(x, bitIndex) <==> (x & (1 << bitIndex)) != 0
@@ -73,39 +75,55 @@ function Bv10ToSeq(x: bv10): seq<bool> // Converts bitvector to boolean sequence
     isBitSet(x, 8), isBitSet(x, 9)]
 }
 
-function BoolToInt(a: bool): int {
+function BoolToInt(a: bool): int 
+ensures BoolToInt(a) == if a then 1 else 0
+{
     if a then 1 else 0
 }
 
-function XOR(a: bool, b: bool): bool {
-    (a || b) && !(a && b)
+function XOR(a: bool, b: bool): bool
+ensures XOR(a, b) == (a != b)
+{
+   a != b
 }
 
-function BitAddition(s: array<bool>, t: array<bool>): seq<bool> // Performs traditional bit addition
+function BitAddition(s: array<bool>, t: array<bool>): bv10 // Performs traditional bit addition
     reads s
     reads t
     requires s.Length == 10 && t.Length == 10
+    ensures BitAddition(s, t) == (ArrayToBv10(s) + ArrayToBv10(t))
+    ensures BitAddition(s, t) <= 1023
 {
     var a: bv10 := ArrayToBv10(s);
     var b: bv10 := ArrayToBv10(t);
     var c: bv10 := a + b;
-    Bv10ToSeq(c)
+    assert c <= 1023;
+    c
 }
+
+function SeqBitAddition(s: array<bool>, t: array<bool>): seq<bool>
+    reads s
+    reads t
+    requires s.Length == 10 && t.Length == 10
+    ensures SeqBitAddition(s, t) == Bv10ToSeq(ArrayToBv10(s) + ArrayToBv10(t))
+{
+    Bv10ToSeq(BitAddition(s, t))
+}
+
 
 method BinaryAddition(s: array<bool>, t: array<bool>) returns (sresult: seq<bool>) // Generated program for bit addition
     requires s.Length == 10 && t.Length == 10
     ensures |sresult| == 10
-    ensures forall i :: 0 <= i && i < |sresult| ==> sresult[i] == ((s[i] != t[i]) != (i > 0
-                    && ((s[i-1] || t[i-1]) && !(sresult[i-1] && (s[i-1] != t[i-1])))))
-    ensures BitAddition(s, t) == sresult // Verification of correctness
+    ensures SeqBitAddition(s, t) == sresult // Verification of correctness
 {
     var a: bool := false;
     var b: bool := false;
+    var check: seq<bool> := SeqBitAddition(s, t);
     var result: array<bool> := new bool[10];
     var i: int := 0;
     while i < result.Length
     invariant 0 <= i <= result.Length
-        invariant forall j :: 0 <= j < i ==> result[j] == false
+    invariant forall j :: 0 <= j < i ==> result[j] == false
     {
         result[i] := false;
         i := i + 1;
@@ -113,18 +131,14 @@ method BinaryAddition(s: array<bool>, t: array<bool>) returns (sresult: seq<bool
 
     i := 0;
 
-    assert forall j :: 0 <= j < result.Length ==> result[j] == false;
-
     while i < result.Length
         invariant 0 <= i <= result.Length
         invariant b == (i > 0 && ((s[i-1] || t[i-1]) && !(result[i-1] && (s[i-1] != t[i-1]))))
-        invariant forall j :: 0 <= j < i ==> result[j] == ((s[j] != t[j]) != (j > 0 && ((s[j-1] || t[j-1]) && !(result[j-1] && (s[j-1] != t[j-1])))))
+        invariant forall j :: 0 <= j && j < i ==> result[j] == check[j] 
     {
-        assert b == (i > 0 && ((s[i-1] || t[i-1]) && !(result[i-1] && (s[i-1] != t[i-1]))));
-
         result[i] := XOR(b, XOR(s[i], t[i]));
+
         b := BoolToInt(b) + BoolToInt(s[i]) + BoolToInt(t[i]) > 1;
-        assert b == ((s[i] || t[i]) && !(result[i] && (s[i] != t[i])));
 
         i := i + 1;
     }
